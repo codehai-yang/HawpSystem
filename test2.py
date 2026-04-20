@@ -556,74 +556,6 @@ def visualize(image_path, junctions, adj, device_boxes,
     cv2.imwrite(out_path, image)
     print(f'可视化: {out_path}')
 
-
-# ═══════════════════════════════════════════
-#  保存结果
-# ═══════════════════════════════════════════
-
-def save_results(connections, out_dir, base):
-    os.makedirs(out_dir, exist_ok=True)
-
-    csv_path = os.path.join(out_dir, base+'_connections.csv')
-    with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
-        w = csv.writer(f)
-        w.writerow(['信号名', '设备A', '设备B'])
-        for c in connections:
-            w.writerow([c['signal'], c['from_device'], c['to_device']])
-    print(f'CSV: {csv_path}')
-
-    json_path = os.path.join(out_dir, base+'_connections.json')
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump([{
-            'signal':      c['signal'],
-            'from_device': c['from_device'],
-            'to_device':   c['to_device'],
-        } for c in connections], f, indent=2, ensure_ascii=False)
-    print(f'JSON: {json_path}')
-
-
-# ═══════════════════════════════════════════
-#  主流程
-# ═══════════════════════════════════════════
-
-def process(image_path, out_dir='./results'):
-    os.makedirs(out_dir, exist_ok=True)
-    base = os.path.splitext(os.path.basename(image_path))[0]
-
-    print('\n=== Step 1: HAWP 线段检测 ===')
-    model = load_hawp()
-    hawp_lines, ori_w, ori_h = hawp_predict(model, image_path)
-
-    print('\n=== Step 2: 构建图 ===')
-    junctions, adj = build_graph(hawp_lines, MERGE_TH)
-
-    print('\n=== Step 3: YOLO + OCR ===')
-    with open(image_path, 'rb') as f:
-        img_b64 = base64.b64encode(f.read()).decode()
-    yolo_ocr_objects = process_single_page_image(img_b64)
-    device_boxes, ground_boxes, power_boxes, signal_boxes = parse_objects(yolo_ocr_objects)
-
-    print('\n=== Step 4: 找设备入口节点 ===')
-    # 每个设备对应的入口点
-    device_entries, ground_entries, power_entries = find_entry_points(junctions, device_boxes, EDGE_TOL, ground_boxes, power_boxes)
-    print('\n=== Step 5: BFS 搜索连接关系 ===')
-    connections = find_connections_bfs(
-        junctions, adj, device_boxes,
-        device_entries, signal_boxes, OCR_DIST,ground_entries, ground_boxes, power_entries, power_boxes)
-
-    print('\n--- 连接关系预览 ---')
-    for c in connections:
-        sig = f'[{c["signal"]}]' if c['signal'] else '[未知信号]'
-        print(f'  {c["from_device"]}  ←{sig}→  {c["to_device"]}')
-
-    print('\n=== Step 6: 保存结果 ===')
-    visualize(image_path, junctions, adj, device_boxes,
-              device_entries, connections,
-              os.path.join(out_dir, base+'_result.jpg'))
-    save_results(connections, out_dir, base)
-
-    return connections
-
 def box_width(box):
     """计算矩形框宽度"""
     return box[2] - box[0]
@@ -675,7 +607,7 @@ def box_area(box):
     return (box[2] - box[0]) * (box[3] - box[1])
 
 
-def merge_split_device_boxes(device_boxes, width_ratio_threshold=0.3, vertical_gap_threshold=1000):
+def merge_split_device_boxes(device_boxes, width_ratio_threshold=0.3, vertical_gap_threshold=2000,top_extend=85):
     """
     合并分裂的 device 矩形框。
 
@@ -754,6 +686,7 @@ def merge_split_device_boxes(device_boxes, width_ratio_threshold=0.3, vertical_g
         merged_y1 = min(device_boxes[idx]['box'][1] for idx in group_indices)
         merged_x2 = max(device_boxes[idx]['box'][2] for idx in group_indices)
         merged_y2 = max(device_boxes[idx]['box'][3] for idx in group_indices)
+        merged_y1 = merged_y1 - top_extend
         merged_box = [merged_x1, merged_y1, merged_x2, merged_y2]
 
         # 合并 raw_text（取非空的文本）
@@ -792,12 +725,82 @@ def merge_split_device_boxes(device_boxes, width_ratio_threshold=0.3, vertical_g
 
 
 # ═══════════════════════════════════════════
+#  保存结果
+# ═══════════════════════════════════════════
+
+def save_results(connections, out_dir, base):
+    os.makedirs(out_dir, exist_ok=True)
+
+    csv_path = os.path.join(out_dir, base+'_connections.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
+        w = csv.writer(f)
+        w.writerow(['信号名', '设备A', '设备B'])
+        for c in connections:
+            w.writerow([c['signal'], c['from_device'], c['to_device']])
+    print(f'CSV: {csv_path}')
+
+    json_path = os.path.join(out_dir, base+'_connections.json')
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump([{
+            'signal':      c['signal'],
+            'from_device': c['from_device'],
+            'to_device':   c['to_device'],
+        } for c in connections], f, indent=2, ensure_ascii=False)
+    print(f'JSON: {json_path}')
+
+
+# ═══════════════════════════════════════════
+#  主流程
+# ═══════════════════════════════════════════
+
+def process(image_path, out_dir='./results'):
+    os.makedirs(out_dir, exist_ok=True)
+    base = os.path.splitext(os.path.basename(image_path))[0]
+
+    print('\n=== Step 1: HAWP 线段检测 ===')
+    model = load_hawp()
+    hawp_lines, ori_w, ori_h = hawp_predict(model, image_path)
+
+    print('\n=== Step 2: 构建图 ===')
+    junctions, adj = build_graph(hawp_lines, MERGE_TH)
+
+    print('\n=== Step 3: YOLO + OCR ===')
+    with open(image_path, 'rb') as f:
+        img_b64 = base64.b64encode(f.read()).decode()
+    yolo_ocr_objects = process_single_page_image(img_b64)
+    device_boxes, ground_boxes, power_boxes, signal_boxes = parse_objects(yolo_ocr_objects)
+
+    print('\n=== Step 4: 找设备入口节点 ===')
+    # 每个设备对应的入口点
+    device_entries, ground_entries, power_entries = find_entry_points(junctions, device_boxes, EDGE_TOL, ground_boxes, power_boxes)
+    print('\n=== Step 5: BFS 搜索连接关系 ===')
+    connections = find_connections_bfs(
+        junctions, adj, device_boxes,
+        device_entries, signal_boxes, OCR_DIST,ground_entries, ground_boxes, power_entries, power_boxes)
+
+    print('\n--- 连接关系预览 ---')
+    for c in connections:
+        sig = f'[{c["signal"]}]' if c['signal'] else '[未知信号]'
+        print(f'  {c["from_device"]}  ←{sig}→  {c["to_device"]}')
+
+    print('\n=== Step 6: 保存结果 ===')
+    visualize(image_path, junctions, adj, device_boxes,
+              device_entries, connections,
+              os.path.join(out_dir, base+'_result.jpg'))
+    save_results(connections, out_dir, base)
+
+    return connections
+
+
+
+
+# ═══════════════════════════════════════════
 #  入口
 # ═══════════════════════════════════════════
 
 if __name__ == '__main__':
     # 配置参数
-    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_3_original.jpg'  # 修改为您的图片路径
+    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_9_original.jpg'  # 修改为您的图片路径
     OUTPUT_DIR = './output'                       # 输出目录
 
     process(IMAGE_PATH, OUTPUT_DIR)
