@@ -1,0 +1,20 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+
+# UV
+# uv.lock  <-- Keep this in version control usually
+
+/output/
+/models/
+/static/
