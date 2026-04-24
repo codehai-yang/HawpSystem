@@ -383,10 +383,14 @@ def parse_objects(objects):
 #  Step 4：找设备入口节点
 # ═══════════════════════════════════════════
 
-def find_entry_points(junctions, device_boxes, edge_tol, ground_boxes, power_boxes, hawp_lines):
+def find_entry_points(junctions, device_boxes, edge_tol, ground_boxes, power_boxes, hawp_lines, box_expand=15):
     """
     找每个设备框、ground框、power框的入口节点。
-    新逻辑：只要HAWP检测的线段与设备框有交点，交点就是入口点（直接创建新的junction）。
+    新逻辑：将YOLO框向外扩展box_expand像素，只要HAWP线段与扩展框有交点，交点就是入口点。
+
+    参数：
+    - box_expand: YOLO框向外扩展的像素距离（默认15像素）
+
     返回 {dev_idx: [jid, ...]}, {ground_idx: [jid, ...]}, {power_idx: [jid, ...]}
     """
     device_entries = defaultdict(list)
@@ -405,16 +409,25 @@ def find_entry_points(junctions, device_boxes, edge_tol, ground_boxes, power_box
         nonlocal next_jid
 
         for box_idx, box_info in enumerate(boxes):
-            box = box_info['box']
+            original_box = box_info['box']
+
+            # 将YOLO框向外扩展
+            expanded_box = [
+                max(0, original_box[0] - box_expand),      # x1 向左扩展
+                max(0, original_box[1] - box_expand),      # y1 向上扩展
+                original_box[2] + box_expand,              # x2 向右扩展
+                original_box[3] + box_expand               # y2 向下扩展
+            ]
+
             entry_jids = []
 
-            # 遍历所有HAWP线段，找与当前框相交的线段
+            # 遍历所有HAWP线段，找与扩展框相交的线段
             for line_idx, line in enumerate(hawp_lines):
                 p1 = line['p1']
                 p2 = line['p2']
 
-                # 计算线段与框的交点
-                intersections = line_box_intersections(p1, p2, box)
+                # 计算线段与扩展框的交点
+                intersections = line_box_intersections(p1, p2, expanded_box)
 
                 # 对于每个交点，创建一个新的junction
                 for ix, iy in intersections:
@@ -436,7 +449,8 @@ def find_entry_points(junctions, device_boxes, edge_tol, ground_boxes, power_box
     # 将新创建的入口点添加到junctions列表中
     junctions.extend(new_junctions)
 
-    print(f'\n新增入口点数量: {len(new_junctions)}')
+    print(f'\n框扩展距离: {box_expand} 像素')
+    print(f'新增入口点数量: {len(new_junctions)}')
     print(f'总junction数量: {len(junctions)}')
 
     print('\n设备入口点:')
@@ -480,11 +494,8 @@ def rebuild_graph_with_entries(original_junctions, original_adj, new_entries, en
             new_adj[jid].add(nb)
             new_adj[nb].add(jid)
 
-    # 为每个入口点找到它所属的HAWP线段的两个端点对应的junction
-    # 首先建立HAWP线段端点到junction的映射
-    line_to_endpoints = {}  # line_idx -> (endpoint_jid_1, endpoint_jid_2)
-
-    # 重建线段端点到junction的映射
+    # 重建HAWP线段端点到junction ID的映射
+    # 关键：必须使用与 build_graph 相同的逻辑，确保ID一致
     raw_pts = []
     for seg in hawp_lines:
         raw_pts.append(seg['p1'])
@@ -508,27 +519,41 @@ def rebuild_graph_with_entries(original_junctions, original_adj, new_entries, en
             if dist(raw_pts[i], raw_pts[j]) < merge_threshold:
                 union(i, j)
 
-    # 整理分组
+    # 整理分组，坐标取均值
     groups = defaultdict(list)
     for i in range(n):
         groups[find(i)].append(i)
 
+    # 关键修复：按照 original_junctions 的顺序建立映射
+    # original_junctions 中的每个junction对应一个group
     root_to_jid = {}
-    junction_id_map = []
-    jid_counter = 0
-    for root, members in groups.items():
-        root_to_jid[root] = jid_counter
-        junction_id_map.append(members)
-        jid_counter += 1
+    for jid, junc in enumerate(original_junctions):
+        # 找到这个junction对应的raw_pts索引
+        jx, jy = junc['x'], junc['y']
+        for root, members in groups.items():
+            # 计算该组成员的平均坐标
+            avg_x = sum(raw_pts[m][0] for m in members) / len(members)
+            avg_y = sum(raw_pts[m][1] for m in members) / len(members)
+
+            # 如果平均坐标与junction坐标接近，认为是同一个
+            if abs(avg_x - jx) < 1 and abs(avg_y - jy) < 1:
+                root_to_jid[root] = jid
+                break
 
     # 建立线段索引到端点junction的映射
+    line_to_endpoints = {}
     for line_idx in range(len(hawp_lines)):
         pi, pj = line_idx * 2, line_idx * 2 + 1
-        ja = root_to_jid[find(pi)]
-        jb = root_to_jid[find(pj)]
-        line_to_endpoints[line_idx] = (ja, jb)
+        root_i = find(pi)
+        root_j = find(pj)
+
+        if root_i in root_to_jid and root_j in root_to_jid:
+            ja = root_to_jid[root_i]
+            jb = root_to_jid[root_j]
+            line_to_endpoints[line_idx] = (ja, jb)
 
     # 为每个入口点添加连接到对应线段的两个端点
+    connected_count = 0
     for entry_jid, line_idx in entry_to_lines:
         if line_idx in line_to_endpoints:
             ep1, ep2 = line_to_endpoints[line_idx]
@@ -537,12 +562,12 @@ def rebuild_graph_with_entries(original_junctions, original_adj, new_entries, en
             new_adj[ep1].add(entry_jid)
             new_adj[entry_jid].add(ep2)
             new_adj[ep2].add(entry_jid)
+            connected_count += 1
 
-    print(f'[重建图] 添加了 {len(entry_to_lines)} 个入口点连接')
+    print(f'[重建图] 成功连接 {connected_count}/{len(entry_to_lines)} 个入口点')
     print(f'[重建图] 总边数: {sum(len(v) for v in new_adj.values()) // 2}')
 
     return dict(new_adj)
-
 def line_segment_intersection(p1, p2, p3, p4):
     """
     计算两条线段的交点
@@ -627,6 +652,46 @@ def bfs_path_exists(start_jid, target_set, adj,
 
     return False, None
 
+def boxes_edge_touch(box1, box2, touch_threshold=5):
+    """
+    判断两个矩形框的边是否相交或触碰（但不包括完全嵌套的情况）
+
+    参数：
+    - box1, box2: [x1, y1, x2, y2]
+    - touch_threshold: 触碰阈值，边距离小于此值视为触碰
+
+    返回：
+    - True 如果边相交或触碰，False 如果不相交或嵌套
+    """
+    x1_min, y1_min, x1_max, y1_max = box1
+    x2_min, y2_min, x2_max, y2_max = box2
+
+    # 检查是否是嵌套关系（一个框完全在另一个框内部）
+    # box2 完全在 box1 内部
+    is_box2_inside = (x2_min >= x1_min and x2_max <= x1_max and
+                      y2_min >= y1_min and y2_max <= y1_max)
+
+    # box1 完全在 box2 内部
+    is_box1_inside = (x1_min >= x2_min and x1_max <= x2_max and
+                      y1_min >= y2_min and y1_max <= y2_max)
+
+    # 如果是嵌套关系，返回 False（不跳过，需要检测）
+    if is_box2_inside or is_box1_inside:
+        return False
+
+    # 检查边是否相交或触碰
+    # 扩展box2的边界（用于容忍小的间隙）
+    expanded_x2_min = x2_min - touch_threshold
+    expanded_y2_min = y2_min - touch_threshold
+    expanded_x2_max = x2_max + touch_threshold
+    expanded_y2_max = y2_max + touch_threshold
+
+    # 检查是否有重叠区域
+    has_overlap_x = not (x1_max < expanded_x2_min or x1_min > expanded_x2_max)
+    has_overlap_y = not (y1_max < expanded_y2_min or y1_min > expanded_y2_max)
+
+    # 如果有重叠，说明边相交或触碰
+    return has_overlap_x and has_overlap_y
 
 def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_boxes,
                          ocr_dist, ground_entries, ground_boxes, power_entries, power_boxes):
@@ -637,6 +702,7 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
     1. 根据设备相对方位，只搜索相关方向的入口点
     2. 找到所有可达路径，而不是只找第一条
     3. 在每条路径上查找与路径相交或在上方的 signalName
+    4. 跳过边相交的设备框（但保留嵌套的检测）
     """
     # id对应的x,y坐标字典
     jmap = {j['id']: j for j in junctions}
@@ -683,6 +749,8 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
 
     print(f'\n[BFS] 开始搜索连接关系，共 {n_devs} 个设备（{device_count} device, {ground_count} ground, {len(power_boxes)} power）')
 
+    skipped_edge_touch = 0  # 统计跳过的边相交框数量
+
     for dev_a in range(n_devs):
         entries_a = all_entries.get(dev_a, [])
         if not entries_a:
@@ -696,6 +764,12 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
                 continue
 
             dev_b_info = all_devices[dev_b]
+
+            # 检查两个设备框的边是否相交/触碰，如果是则跳过（但嵌套不跳过）
+            if boxes_edge_touch(dev_a_info['box'], dev_b_info['box'], touch_threshold=5):
+                skipped_edge_touch += 1
+                print(f'[跳过] 设备框边相交: "{dev_a_info["raw_text"]}" 和 "{dev_b_info["raw_text"]}"')
+                continue
 
             # 根据相对方位筛选入口点
             filtered_entries_a, filtered_entries_b = filter_entries_by_direction(
@@ -740,9 +814,9 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
                     'path_jids': path_jids
                 })
 
+    print(f'[BFS] 跳过 {skipped_edge_touch} 对边相交的设备框')
     print(f'[BFS] 找到 {len(connections)} 条连接路径')
     return connections
-
 def find_all_paths(start_jids, target_set, adj, exclude_jids, max_depth=30):
     """
     从多个起点出发，找到所有能到达目标集合的路径
@@ -1475,10 +1549,12 @@ def process(image_path, out_dir='./results'):
 
     print('\n=== Step 4: 找设备入口节点 ===')
     # 每个设备对应的入口点
-    device_entries, ground_entries, power_entries, entry_to_lines = find_entry_points(junctions, device_boxes, EDGE_TOL, ground_boxes, power_boxes, hawp_lines)
+    # 每个设备对应的入口点（框向外扩展15像素）
+    BOX_EXPAND = 15  # YOLO框向外扩展的像素距离
+    device_entries, ground_entries, power_entries, entry_to_lines = find_entry_points(
+        junctions, device_boxes, EDGE_TOL, ground_boxes, power_boxes, hawp_lines, box_expand=BOX_EXPAND)
     print('\n=== Step 4.5: 重建图（包含入口点）===')
     adj = rebuild_graph_with_entries(junctions, adj, [], entry_to_lines, hawp_lines, MERGE_TH)
-
     print('\n=== Step 5: BFS 搜索连接关系 ===')
     connections = find_connections_bfs(
         junctions, adj, device_boxes,
@@ -1506,7 +1582,7 @@ def process(image_path, out_dir='./results'):
 
 if __name__ == '__main__':
     # 配置参数
-    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_28_original.jpg'  # 修改为您的图片路径
+    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_0_original.jpg'  # 修改为您的图片路径
     OUTPUT_DIR = './output'                       # 输出目录
 
     process(IMAGE_PATH, OUTPUT_DIR)
