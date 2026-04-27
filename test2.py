@@ -703,6 +703,7 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
     2. 找到所有可达路径，而不是只找第一条
     3. 在每条路径上查找与路径相交或在上方的 signalName
     4. 跳过边相交的设备框（但保留嵌套的检测）
+    5. 允许嵌套设备之间的连接（小设备在大设备内部）
     """
     # id对应的x,y坐标字典
     jmap = {j['id']: j for j in junctions}
@@ -740,12 +741,12 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
     n_devs = len(all_devices)
     connections = []
 
-    # 预计算：哪些 junction 在设备框内部
-    interior_jids = set()
-    for j in junctions:
-        for dev in all_devices:
-            if point_in_box(j['x'], j['y'], dev['box'], pad=-5):
-                interior_jids.add(j['id'])
+    # Deleted:# 预计算：哪些 junction 在设备框内部
+    # Deleted:interior_jids = set()
+    # Deleted:for j in junctions:
+    # Deleted:    for dev in all_devices:
+    # Deleted:        if point_in_box(j['x'], j['y'], dev['box'], pad=-5):
+    # Deleted:            interior_jids.add(j['id'])
 
     print(f'\n[BFS] 开始搜索连接关系，共 {n_devs} 个设备（{device_count} device, {ground_count} ground, {len(power_boxes)} power）')
 
@@ -781,13 +782,22 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
 
             target_set = set(filtered_entries_b)
 
-            # 找到所有可达路径
+            # Deleted:# 找到所有可达路径
+            # Deleted:all_paths = find_all_paths(
+            # Deleted:    filtered_entries_a,
+            # Deleted:    target_set,
+            # Deleted:    adj,
+            # Deleted:    interior_jids - target_set,
+            # Deleted:    max_depth=30
+            # Deleted:)
+
+            # 找到所有可达路径（不再排除设备内部的junction，允许嵌套设备连接）
             all_paths = find_all_paths(
                 filtered_entries_a,
                 target_set,
                 adj,
-                interior_jids - target_set,
-                max_depth=30
+                exclude_jids=set(),  # 不排除任何内部节点
+                max_depth=50  # 增加最大深度以支持更复杂的路径
             )
 
             # 为每条路径创建连接记录
@@ -1582,7 +1592,7 @@ def process(image_path, out_dir='./results'):
 
 if __name__ == '__main__':
     # 配置参数
-    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_0_original.jpg'  # 修改为您的图片路径
+    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_28_original.jpg'  # 修改为您的图片路径
     OUTPUT_DIR = './output'                       # 输出目录
 
     process(IMAGE_PATH, OUTPUT_DIR)
