@@ -472,7 +472,12 @@ def find_entry_points(junctions, device_boxes, edge_tol, ground_boxes, power_box
 
 def rebuild_graph_with_entries(original_junctions, original_adj, new_entries, entry_to_lines, hawp_lines, merge_threshold):
     """
-    重新构建图，将入口点连接到对应的HAWP线段端点
+    重新构建图，将入口点插入到HAWP线段中（真正切割线段）
+
+    关键改进：
+    - 不再简单地将入口点连接到线段端点
+    - 而是将线段在交点处切断，入口点成为线段的一部分
+    - 这样入口点之间就能通过真实的线段路径连通
 
     参数：
     - original_junctions: 原始的junctions列表
@@ -494,80 +499,96 @@ def rebuild_graph_with_entries(original_junctions, original_adj, new_entries, en
             new_adj[jid].add(nb)
             new_adj[nb].add(jid)
 
-    # 重建HAWP线段端点到junction ID的映射
-    # 关键：必须使用与 build_graph 相同的逻辑，确保ID一致
-    raw_pts = []
-    for seg in hawp_lines:
-        raw_pts.append(seg['p1'])
-        raw_pts.append(seg['p2'])
-
-    n = len(raw_pts)
-    parent = list(range(n))
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    def union(i, j):
-        parent[find(i)] = find(j)
-
-    # 距离小于阈值的端点合并
-    for i in range(n):
-        for j in range(i+1, n):
-            if dist(raw_pts[i], raw_pts[j]) < merge_threshold:
-                union(i, j)
-
-    # 整理分组，坐标取均值
-    groups = defaultdict(list)
-    for i in range(n):
-        groups[find(i)].append(i)
-
-    # 关键修复：按照 original_junctions 的顺序建立映射
-    # original_junctions 中的每个junction对应一个group
-    root_to_jid = {}
-    for jid, junc in enumerate(original_junctions):
-        # 找到这个junction对应的raw_pts索引
-        jx, jy = junc['x'], junc['y']
-        for root, members in groups.items():
-            # 计算该组成员的平均坐标
-            avg_x = sum(raw_pts[m][0] for m in members) / len(members)
-            avg_y = sum(raw_pts[m][1] for m in members) / len(members)
-
-            # 如果平均坐标与junction坐标接近，认为是同一个
-            if abs(avg_x - jx) < 1 and abs(avg_y - jy) < 1:
-                root_to_jid[root] = jid
-                break
-
-    # 建立线段索引到端点junction的映射
-    line_to_endpoints = {}
-    for line_idx in range(len(hawp_lines)):
-        pi, pj = line_idx * 2, line_idx * 2 + 1
-        root_i = find(pi)
-        root_j = find(pj)
-
-        if root_i in root_to_jid and root_j in root_to_jid:
-            ja = root_to_jid[root_i]
-            jb = root_to_jid[root_j]
-            line_to_endpoints[line_idx] = (ja, jb)
-
-    # 为每个入口点添加连接到对应线段的两个端点
-    connected_count = 0
+    # 新方法：按线段分组入口点
+    line_to_entries = defaultdict(list)
     for entry_jid, line_idx in entry_to_lines:
-        if line_idx in line_to_endpoints:
-            ep1, ep2 = line_to_endpoints[line_idx]
-            # 将入口点连接到线段的两个端点
-            new_adj[entry_jid].add(ep1)
-            new_adj[ep1].add(entry_jid)
-            new_adj[entry_jid].add(ep2)
-            new_adj[ep2].add(entry_jid)
-            connected_count += 1
+        line_to_entries[line_idx].append(entry_jid)
 
-    print(f'[重建图] 成功连接 {connected_count}/{len(entry_to_lines)} 个入口点')
+    # 重建原始junctions的位置索引（用于查找最近的junction）
+    jmap = {j['id']: j for j in original_junctions}
+
+    cut_count = 0
+    skip_count = 0
+
+    # 对每条有线段穿过的线段进行处理
+    for line_idx, entry_jids in line_to_entries.items():
+        if line_idx >= len(hawp_lines):
+            continue
+
+        line = hawp_lines[line_idx]
+        p1 = np.array(line['p1'])
+        p2 = np.array(line['p2'])
+
+        # 获取这条线段在原始图中的两个端点junction
+        # 通过距离查找最近的junction
+        ep1_jid = None
+        ep2_jid = None
+        min_dist1 = float('inf')
+        min_dist2 = float('inf')
+
+        for jid, j in jmap.items():
+            jpos = np.array([j['x'], j['y']])
+            d1 = np.linalg.norm(jpos - p1)
+            d2 = np.linalg.norm(jpos - p2)
+
+            if d1 < min_dist1 and d1 < merge_threshold * 2:
+                min_dist1 = d1
+                ep1_jid = jid
+
+            if d2 < min_dist2 and d2 < merge_threshold * 2:
+                min_dist2 = d2
+                ep2_jid = jid
+
+        if ep1_jid is None or ep2_jid is None:
+            skip_count += 1
+            continue
+
+        # 将入口点按照在线段上的位置排序（投影到线段上）
+        line_vec = p2 - p1
+        line_len = np.linalg.norm(line_vec)
+
+        if line_len < 1e-6:
+            continue
+
+        line_unit = line_vec / line_len
+
+        # 计算每个入口点的投影位置（0到1之间）
+        entry_positions = []
+        for entry_jid in entry_jids:
+            entry_pos = np.array([jmap[entry_jid]['x'], jmap[entry_jid]['y']])
+            proj = np.dot(entry_pos - p1, line_unit) / line_len
+            proj = np.clip(proj, 0.0, 1.0)
+            entry_positions.append((proj, entry_jid))
+
+        # 按投影位置排序
+        entry_positions.sort(key=lambda x: x[0])
+
+        # 现在构建新的连接链：ep1 -> entry1 -> entry2 -> ... -> ep2
+        # 首先删除原来的直接连接
+        if ep2_jid in new_adj.get(ep1_jid, set()):
+            new_adj[ep1_jid].discard(ep2_jid)
+            new_adj[ep2_jid].discard(ep1_jid)
+
+        # 依次连接：ep1 -> 第一个入口点 -> 第二个入口点 -> ... -> ep2
+        prev_jid = ep1_jid
+        for proj, entry_jid in entry_positions:
+            # 连接前一个节点到当前入口点
+            new_adj[prev_jid].add(entry_jid)
+            new_adj[entry_jid].add(prev_jid)
+            prev_jid = entry_jid
+            cut_count += 1
+
+        # 连接最后一个入口点到ep2
+        new_adj[prev_jid].add(ep2_jid)
+        new_adj[ep2_jid].add(prev_jid)
+        cut_count += 1
+
+    print(f'[重建图] 成功切割 {cut_count} 条线段连接')
+    print(f'[重建图] 跳过 {skip_count} 条无法匹配的线段')
     print(f'[重建图] 总边数: {sum(len(v) for v in new_adj.values()) // 2}')
 
     return dict(new_adj)
+
 def line_segment_intersection(p1, p2, p3, p4):
     """
     计算两条线段的交点
@@ -675,11 +696,11 @@ def boxes_edge_touch(box1, box2, touch_threshold=5):
     is_box1_inside = (x1_min >= x2_min and x1_max <= x2_max and
                       y1_min >= y2_min and y1_max <= y2_max)
 
-    # 如果是嵌套关系，返回 False（不跳过，需要检测）
+    # 如果是嵌套关系，直接返回 False（不跳过，需要检测）
     if is_box2_inside or is_box1_inside:
         return False
 
-    # 检查边是否相交或触碰
+    # 非嵌套情况：检查边是否相交或触碰
     # 扩展box2的边界（用于容忍小的间隙）
     expanded_x2_min = x2_min - touch_threshold
     expanded_y2_min = y2_min - touch_threshold
@@ -693,17 +714,79 @@ def boxes_edge_touch(box1, box2, touch_threshold=5):
     # 如果有重叠，说明边相交或触碰
     return has_overlap_x and has_overlap_y
 
+
+def find_all_paths_dfs(start_jids, target_set, adj, exclude_jids, max_depth=100):
+    """
+    使用DFS找所有从起点集合到目标集合的路径
+
+    关键改进：
+    1. 使用DFS而非BFS，可以找到所有路径（包括长路径和复杂拐弯）
+    2. 每条路径独立维护visited，不会相互干扰
+    3. 排除其他设备的入口点，防止路径穿越其他设备
+    4. 增加深度限制到100，支持复杂路径
+
+    参数：
+    - start_jids: 起点列表（设备A的所有入口点）
+    - target_set: 目标集合（设备B的所有入口点）
+    - adj: 邻接表
+    - exclude_jids: 不能经过的节点集合（其他设备的入口点）
+    - max_depth: 最大路径长度
+
+    返回：
+    - 所有路径的列表
+    """
+    all_paths = []
+    paths_found = set()  # 用于去重
+
+    def dfs(current, target, path, visited):
+        """递归DFS"""
+        # 达到最大深度，停止
+        if len(path) > max_depth:
+            return
+
+        # 到达目标，记录路径
+        if current in target:
+            path_tuple = tuple(path)
+            if path_tuple not in paths_found:
+                paths_found.add(path_tuple)
+                all_paths.append(list(path))
+            return
+
+        # 扩展邻居
+        for neighbor in adj.get(current, []):
+            # 跳过已访问的节点（防止环路）
+            if neighbor in visited:
+                continue
+
+            # 跳过禁止经过的节点（其他设备的入口点）
+            if neighbor in exclude_jids:
+                continue
+
+            # 递归搜索
+            visited.add(neighbor)
+            path.append(neighbor)
+            dfs(neighbor, target, path, visited)
+            path.pop()
+            visited.remove(neighbor)
+
+    # 从每个起点开始DFS
+    for start_jid in start_jids:
+        visited = {start_jid}
+        dfs(start_jid, target_set, [start_jid], visited)
+
+    print(f'[DFS] 找到 {len(all_paths)} 条路径')
+    return all_paths
+
 def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_boxes,
                          ocr_dist, ground_entries, ground_boxes, power_entries, power_boxes):
     """
-    对每对设备进行 BFS 搜索，找到所有可能的连接路径。
+    对每对设备进行路径搜索，找到所有可能的连接路径。
 
-    优化策略：
-    1. 根据设备相对方位，只搜索相关方向的入口点
-    2. 找到所有可达路径，而不是只找第一条
-    3. 在每条路径上查找与路径相交或在上方的 signalName
-    4. 跳过边相交的设备框（但保留嵌套的检测）
-    5. 允许嵌套设备之间的连接（小设备在大设备内部）
+    关键改进：
+    1. 使用DFS替代BFS，可以找到所有路径（包括复杂拐弯）
+    2. 放宽方向过滤，允许更多入口点参与搜索
+    3. 增加最大深度限制
+    4. 防止入口点之间的来回遍历（通过exclude机制）
     """
     # id对应的x,y坐标字典
     jmap = {j['id']: j for j in junctions}
@@ -741,16 +824,14 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
     n_devs = len(all_devices)
     connections = []
 
-    # Deleted:# 预计算：哪些 junction 在设备框内部
-    # Deleted:interior_jids = set()
-    # Deleted:for j in junctions:
-    # Deleted:    for dev in all_devices:
-    # Deleted:        if point_in_box(j['x'], j['y'], dev['box'], pad=-5):
-    # Deleted:            interior_jids.add(j['id'])
-
     print(f'\n[BFS] 开始搜索连接关系，共 {n_devs} 个设备（{device_count} device, {ground_count} ground, {len(power_boxes)} power）')
 
     skipped_edge_touch = 0  # 统计跳过的边相交框数量
+
+    # 收集所有入口点ID，用于防止路径中重复访问其他设备的入口点
+    all_entry_jids = set()
+    for entries in all_entries.values():
+        all_entry_jids.update(entries)
 
     for dev_a in range(n_devs):
         entries_a = all_entries.get(dev_a, [])
@@ -772,32 +853,29 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
                 print(f'[跳过] 设备框边相交: "{dev_a_info["raw_text"]}" 和 "{dev_b_info["raw_text"]}"')
                 continue
 
-            # 根据相对方位筛选入口点
-            filtered_entries_a, filtered_entries_b = filter_entries_by_direction(
-                dev_a_info, dev_b_info, entries_a, entries_b, jmap
-            )
-
-            if not filtered_entries_a or not filtered_entries_b:
-                continue
-
-            target_set = set(filtered_entries_b)
-
-            # Deleted:# 找到所有可达路径
-            # Deleted:all_paths = find_all_paths(
-            # Deleted:    filtered_entries_a,
-            # Deleted:    target_set,
-            # Deleted:    adj,
-            # Deleted:    interior_jids - target_set,
-            # Deleted:    max_depth=30
+            # Deleted:# 根据相对方位筛选入口点
+            # Deleted:filtered_entries_a, filtered_entries_b = filter_entries_by_direction(
+            # Deleted:    dev_a_info, dev_b_info, entries_a, entries_b, jmap
             # Deleted:)
+            # Deleted:
+            # Deleted:if not filtered_entries_a or not filtered_entries_b:
+            # Deleted:    continue
+            # Deleted:
+            # Deleted:target_set = set(filtered_entries_b)
 
-            # 找到所有可达路径（不再排除设备内部的junction，允许嵌套设备连接）
-            all_paths = find_all_paths(
-                filtered_entries_a,
+            # 改进：不过滤方向，使用所有入口点（或者只进行宽松过滤）
+            target_set = set(entries_b)
+
+            # 可选：如果入口点太多，可以进行宽松的方向过滤
+            # 这里暂时使用全部入口点，确保不漏掉复杂路径
+
+            # 使用DFS找所有路径（允许复杂拐弯）
+            all_paths = find_all_paths_dfs(
+                entries_a,
                 target_set,
                 adj,
-                exclude_jids=set(),  # 不排除任何内部节点
-                max_depth=50  # 增加最大深度以支持更复杂的路径
+                exclude_jids=all_entry_jids - target_set,  # 排除其他设备的入口点，但不排除目标设备的
+                max_depth=100  # 增加深度限制，支持复杂路径
             )
 
             # 为每条路径创建连接记录
@@ -827,6 +905,7 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
     print(f'[BFS] 跳过 {skipped_edge_touch} 对边相交的设备框')
     print(f'[BFS] 找到 {len(connections)} 条连接路径')
     return connections
+
 def find_all_paths(start_jids, target_set, adj, exclude_jids, max_depth=30):
     """
     从多个起点出发，找到所有能到达目标集合的路径
