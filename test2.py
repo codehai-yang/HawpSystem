@@ -531,7 +531,7 @@ def rebuild_graph_with_entries(original_junctions, original_adj, new_entries, en
             d1 = np.linalg.norm(jpos - p1)
             d2 = np.linalg.norm(jpos - p2)
 
-            if d1 < min_dist1 and d1 < merge_threshold * 2:
+            if d1 < min_dist1:
                 min_dist1 = d1
                 ep1_jid = jid
 
@@ -839,7 +839,6 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
             continue
 
         dev_a_info = all_devices[dev_a]
-
         for dev_b in range(dev_a + 1, n_devs):
             entries_b = all_entries.get(dev_b, [])
             if not entries_b:
@@ -852,17 +851,6 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
                 skipped_edge_touch += 1
                 print(f'[跳过] 设备框边相交: "{dev_a_info["raw_text"]}" 和 "{dev_b_info["raw_text"]}"')
                 continue
-
-            # Deleted:# 根据相对方位筛选入口点
-            # Deleted:filtered_entries_a, filtered_entries_b = filter_entries_by_direction(
-            # Deleted:    dev_a_info, dev_b_info, entries_a, entries_b, jmap
-            # Deleted:)
-            # Deleted:
-            # Deleted:if not filtered_entries_a or not filtered_entries_b:
-            # Deleted:    continue
-            # Deleted:
-            # Deleted:target_set = set(filtered_entries_b)
-
             # 改进：不过滤方向，使用所有入口点（或者只进行宽松过滤）
             target_set = set(entries_b)
 
