@@ -29,11 +29,11 @@ if HAWP_ROOT not in sys.path:
 CKPT_PATH      = r'F:\office\pythonProjects\YOLOandOCR\AutoLogic\BackendOCR\hawpv2-edb9b23f.pth'
 CFG_PATH       = r'F:\office\pythonProjects\YOLOandOCR\AutoLogic\BackendOCR\hawpv2.yaml'
 DEVICE         = 'cuda'
-HAWP_THRESHOLD = 0.1
+HAWP_THRESHOLD = 0.15
 INFER_SIZE     = 512
 TILE_SIZE      = 1024
-OVERLAP        = 128
-MERGE_TH       = 13      # 端点合并距离（像素），分辨率高可调大
+OVERLAP        = 2
+MERGE_TH       = 16      # 端点合并距离（像素），分辨率高可调大
 EDGE_TOL       = 16      # 设备框边缘容差（像素）
 OCR_DIST       = 50      # OCR文字匹配距离（像素）
 # ─────────────────────────────────────────────────────
