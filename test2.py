@@ -1587,7 +1587,7 @@ def process(image_path, out_dir='./results'):
     print('\n=== Step 4: 找设备入口节点 ===')
     # 每个设备对应的入口点
     # 每个设备对应的入口点（框向外扩展15像素）
-    BOX_EXPAND = 15  # YOLO框向外扩展的像素距离
+    BOX_EXPAND = 6  # YOLO框向外扩展的像素距离
     device_entries, ground_entries, power_entries, entry_to_lines = find_entry_points(
         junctions, device_boxes, EDGE_TOL, ground_boxes, power_boxes, hawp_lines, box_expand=BOX_EXPAND)
     print('\n=== Step 4.5: 重建图（包含入口点）===')
@@ -1619,7 +1619,7 @@ def process(image_path, out_dir='./results'):
 
 if __name__ == '__main__':
     # 配置参数
-    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_20_original.jpg'  # 修改为您的图片路径
+    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_9_original.jpg'  # 修改为您的图片路径
     OUTPUT_DIR = './output'                       # 输出目录
 
     process(IMAGE_PATH, OUTPUT_DIR)
