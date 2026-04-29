@@ -18,6 +18,8 @@ __pycache__/
 /output/
 /models/
 /static/
+/images
+/output
 
 # Model files (PyTorch)
 *.pt
