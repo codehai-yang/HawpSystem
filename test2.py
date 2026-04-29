@@ -1619,7 +1619,7 @@ def process(image_path, out_dir='./results'):
 
 if __name__ == '__main__':
     # 配置参数
-    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_20_original.jpg'  # 修改为您的图片路径
+    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_3_original.jpg'  # 修改为您的图片路径
     OUTPUT_DIR = './output'                       # 输出目录
 
     process(IMAGE_PATH, OUTPUT_DIR)
