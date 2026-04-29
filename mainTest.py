@@ -31,7 +31,7 @@ def point_in_box(point, box):
     return box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]
 
 def merge_junctions_in_signal_box(junctions, adj, hawp_lines, signal_boxes, device_boxes,
-                                  expand_distance=50, merge_threshold=5.0):
+                                  expand_distance=30, merge_threshold=50.0):
     """
     合并 signalName box 内方向一致的 junction
 
@@ -404,10 +404,6 @@ def process(image_path, out_dir='./results'):
     print('\n=== Step 3: 构建图 ===')
     junctions, adj = GraphBuilder.build_graph(hawp_lines, Config.MERGE_TH)
 
-    print('\n=== Step 3.5: 合并 signalName box 内的 junction ===')
-    junctions, adj = merge_junctions_in_signal_box(junctions, adj, hawp_lines, signal_boxes, device_boxes,
-                                                   expand_distance=50, merge_threshold=5.0)
-
     print('\n=== Step 4: 找设备入口节点 ===')
     device_entries, ground_entries, power_entries, entry_to_lines = GraphBuilder.find_entry_points(
         junctions, device_boxes, ground_boxes, power_boxes, hawp_lines
@@ -417,6 +413,10 @@ def process(image_path, out_dir='./results'):
     adj = GraphBuilder.rebuild_graph_with_entries(
         junctions, adj, entry_to_lines, hawp_lines, Config.MERGE_TH
     )
+
+    print('\n=== Step 4.6: 合并 signalName box 内的 junction ===')
+    junctions, adj = merge_junctions_in_signal_box(junctions, adj, hawp_lines, signal_boxes, device_boxes,
+                                                   expand_distance=50, merge_threshold=5.0)
 
     print('\n=== Step 5: 搜索连接关系 ===')
     connections = ConnectionFinder.find_connections(
@@ -439,10 +439,9 @@ def process(image_path, out_dir='./results'):
 
     return connections
 
-
 if __name__ == '__main__':
     # 配置参数
-    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_0_original.jpg'
+    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_9_original.jpg'
     OUTPUT_DIR = './output'
 
     process(IMAGE_PATH, OUTPUT_DIR)
