@@ -894,46 +894,6 @@ def find_connections_bfs(junctions, adj, device_boxes, device_entries, signal_bo
     print(f'[BFS] 找到 {len(connections)} 条连接路径')
     return connections
 
-def find_all_paths(start_jids, target_set, adj, exclude_jids, max_depth=30):
-    """
-    从多个起点出发，找到所有能到达目标集合的路径
-
-    返回：
-    - 所有路径的列表，每条路径是一个 junction id 列表
-    """
-    all_paths = []
-    visited_global = set()  # 全局已访问，避免重复路径
-
-    for start_jid in start_jids:
-        # BFS 搜索所有路径
-        visited = {start_jid}
-        # queue 中存储 (当前节点, 当前路径)
-        queue = deque([(start_jid, [start_jid])])
-
-        while queue:
-            cur, path = queue.popleft()
-
-            # 如果达到最大深度，停止扩展
-            if len(path) > max_depth:
-                continue
-
-            # 如果当前节点是目标节点，记录路径
-            if cur in target_set:
-                path_tuple = tuple(path)
-                if path_tuple not in visited_global:
-                    visited_global.add(path_tuple)
-                    all_paths.append(path)
-                # 继续搜索，不break，寻找其他路径
-                continue
-
-            # 扩展邻居节点
-            for nb in adj.get(cur, []):
-                if nb not in visited and nb not in exclude_jids:
-                    visited.add(nb)
-                    queue.append((nb, path + [nb]))
-
-    return all_paths
-
 def get_relative_position(dev_a, dev_b):
     """
     判断 dev_b 相对于 dev_a 的方位
