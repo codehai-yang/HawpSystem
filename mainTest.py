@@ -416,7 +416,7 @@ def process(image_path, out_dir='./results'):
 
     print('\n=== Step 4.6: 合并 signalName box 内的 junction ===')
     junctions, adj = merge_junctions_in_signal_box(junctions, adj, hawp_lines, signal_boxes, device_boxes,
-                                                   expand_distance=50, merge_threshold=5.0)
+                                                   expand_distance=180, merge_threshold=5.0)
 
     print('\n=== Step 5: 搜索连接关系 ===')
     connections = ConnectionFinder.find_connections(
