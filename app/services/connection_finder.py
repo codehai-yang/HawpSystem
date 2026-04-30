@@ -262,6 +262,9 @@ class ConnectionFinder:
                     signal = ConnectionFinder.find_signal_on_path(
                         path_jids, jmap, signal_boxes, ocr_dist
                     )
+                    # 如果连接涉及 power 或 ground，信号名设为 null
+                    if dev_a_info.get('type') in ['power', 'ground'] or dev_b_info.get('type') in ['power', 'ground']:
+                        signal = None
 
                     connections.append({
                         'from_device': dev_a_info.get('raw_text', 'Unknown'),

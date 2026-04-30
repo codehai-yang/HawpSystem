@@ -215,6 +215,81 @@ class BoxUtils:
         return device_boxes
 
     @staticmethod
+    def match_power_ground_names(power_boxes, ground_boxes, signal_boxes, search_range=40):
+        """
+        为 power 和 ground 匹配 signalName
+        规则：只搜索 box 上下两条边上距离最近的 signalName
+
+        Args:
+            power_boxes: power 框列表
+            ground_boxes: ground 框列表
+            signal_boxes: signalName 框列表
+            search_range: 搜索范围（像素）
+
+        Returns:
+            tuple: (power_boxes, ground_boxes)
+        """
+
+        def find_nearest_signal_on_edges(box, label):
+            """在 box 上下边附近寻找最近的 signalName"""
+            x1, y1, x2, y2 = box
+            center_x = (x1 + x2) / 2
+
+            best_signal = None
+            min_dist = float('inf')
+
+            for sig in signal_boxes:
+                sx1, sy1, sx2, sy2 = sig['box']
+                sig_center_x = (sx1 + sx2) / 2
+                sig_center_y = (sy1 + sy2) / 2
+
+                # 检查是否在上下边附近
+                is_near_top_edge = (abs(sig_center_y - y1) <= search_range and
+                                    x1 - 20 <= sig_center_x <= x2 + 20)
+                is_near_bottom_edge = (abs(sig_center_y - y2) <= search_range and
+                                       x1 - 20 <= sig_center_x <= x2 + 20)
+
+                if is_near_top_edge or is_near_bottom_edge:
+                    # 计算到最近边的距离
+                    dist_to_top = abs(sig_center_y - y1)
+                    dist_to_bottom = abs(sig_center_y - y2)
+                    dist = min(dist_to_top, dist_to_bottom)
+
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_signal = sig
+
+            return best_signal, min_dist
+
+        # 处理 power boxes
+        for power in power_boxes:
+            box = power['box']
+            best_signal, min_dist = find_nearest_signal_on_edges(box, "Power")
+
+            if best_signal:
+                power['raw_text'] = best_signal['raw_text']
+                edge = "上边" if abs(best_signal['center'][1] - box[1]) < abs(best_signal['center'][1] - box[3]) else "下边"
+                print(f'[DEBUG] Power at {box} → "{power["raw_text"]}" (最近{edge}, 距离: {min_dist:.1f})')
+            else:
+                power['raw_text'] = "Power"
+                print(f'[DEBUG] Power at {box} → "Power" (未找到 signalName)')
+
+        # 处理 ground boxes
+        for ground in ground_boxes:
+            box = ground['box']
+            best_signal, min_dist = find_nearest_signal_on_edges(box, "Ground")
+
+            if best_signal:
+                ground['raw_text'] = best_signal['raw_text']
+                edge = "上边" if abs(best_signal['center'][1] - box[1]) < abs(best_signal['center'][1] - box[3]) else "下边"
+                print(f'[DEBUG] Ground at {box} → "{ground["raw_text"]}" (最近{edge}, 距离: {min_dist:.1f})')
+            else:
+                ground['raw_text'] = "GND"
+                print(f'[DEBUG] Ground at {box} → "GND" (未找到 signalName)')
+
+        return power_boxes, ground_boxes
+
+    @staticmethod
     def match_device_names(device_boxes, signal_boxes, corner_margin=30,
                            top_search_range=50, center_align_threshold=20):
         """为每个 device 匹配一个最合适的 signalName"""
@@ -225,6 +300,8 @@ class BoxUtils:
             best_signal = None
             best_priority = 999
             min_dist = float('inf')
+
+            has_inside_signal = False
 
             for sig in signal_boxes:
                 sx1, sy1, sx2, sy2 = sig['box']
@@ -245,6 +322,10 @@ class BoxUtils:
 
                 is_inside_center_aligned = (sx1 >= dx1 and sx2 <= dx2 and sy1 >= dy1 and sy2 <= dy2 and
                                             abs(sig_center_x - top_center_x) <= center_align_threshold)
+
+                # 检查是否有框内的 signal
+                if sx1 >= dx1 and sx2 <= dx2 and sy1 >= dy1 and sy2 <= dy2:
+                    has_inside_signal = True
 
                 priority = 999
                 dist_to_ref = float('inf')
@@ -277,6 +358,22 @@ class BoxUtils:
                         best_signal = sig
                         min_dist = dist_to_ref
 
+            # 如果框内没有 signal，则在下方搜索
+            if not has_inside_signal and best_signal is None:
+                for sig in signal_boxes:
+                    sx1, sy1, sx2, sy2 = sig['box']
+                    sig_center_x = (sx1 + sx2) / 2
+                    sig_center_y = (sy1 + sy2) / 2
+
+                    # 在 box 下方搜索
+                    if (sy1 > dy2) and (dx1 - 30 <= sig_center_x <= dx2 + 30) and \
+                            (dy2 < sig_center_y <= dy2 + 80):
+                        dist = abs(sig_center_y - dy2)
+                        if dist < min_dist:
+                            best_signal = sig
+                            min_dist = dist
+                            best_priority = 5
+
             if best_signal:
                 dev['raw_text'] = best_signal['raw_text']
 
@@ -290,8 +387,10 @@ class BoxUtils:
                     position_info = "上方(框外)"
                 elif best_priority == 3:
                     position_info = "下方(框内近顶)"
-                else:
+                elif best_priority == 4:
                     position_info = f"框内居中(偏移{abs(best_signal['center'][0] - top_center_x):.1f}px)"
+                elif best_priority == 5:
+                    position_info = "框外下方搜索"
 
                 print(f'[DEBUG] Device at {dev["box"]} → "{dev["raw_text"]}" '
                       f'(位置: {position_info}, 优先级: {best_priority}, 距离: {min_dist:.1f})')

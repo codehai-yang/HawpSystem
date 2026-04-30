@@ -343,13 +343,27 @@ def parse_objects(objects):
     # 合并分裂的 device 框
     device_boxes = BoxUtils.merge_split_device_boxes(device_boxes)
 
-    # 执行名字匹配
+    # 执行 device 名字匹配
     device_boxes = BoxUtils.match_device_names(device_boxes, signal_boxes)
+
+    # 设置 power 和 ground 的默认名字
+    for power in power_boxes:
+        power['raw_text'] = "KL30"
+
+    for ground in ground_boxes:
+        ground['raw_text'] = "GND"
 
     for dev in device_boxes:
         print(f'[DEBUG] Device at {dev["box"]} assigned name: "{dev["raw_text"]}"')
 
+    for pwr in power_boxes:
+        print(f'[DEBUG] Power at {pwr["box"]} assigned name: "{pwr["raw_text"]}"')
+
+    for gnd in ground_boxes:
+        print(f'[DEBUG] Ground at {gnd["box"]} assigned name: "{gnd["raw_text"]}"')
+
     return device_boxes, ground_boxes, power_boxes, signal_boxes
+
 
 
 def save_results(connections, out_dir, base):
@@ -441,7 +455,7 @@ def process(image_path, out_dir='./results'):
 
 if __name__ == '__main__':
     # 配置参数
-    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_9_original.jpg'
+    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_30_original.jpg'
     OUTPUT_DIR = './output'
 
     process(IMAGE_PATH, OUTPUT_DIR)
