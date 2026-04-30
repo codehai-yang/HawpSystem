@@ -21,19 +21,19 @@ class Config:
     CKPT_PATH = r'F:\office\pythonProjects\YOLOandOCR\AutoLogic\BackendOCR\hawpv2-edb9b23f.pth'
     CFG_PATH = r'F:\office\pythonProjects\YOLOandOCR\AutoLogic\BackendOCR\hawpv2.yaml'
     DEVICE = 'cuda'
-    HAWP_THRESHOLD = 0.1
+    HAWP_THRESHOLD = 0.05
 
     # 推理参数
     INFER_SIZE = 512
     TILE_SIZE = 1024
-    OVERLAP = 2
+    OVERLAP = 0.5
 
     # 图构建参数
-    MERGE_TH = 5          # 端点合并距离（像素）
+    MERGE_TH = 13          # 端点合并距离（像素）
 
     # 入口点检测参数
     EDGE_TOL = 16         # 设备框边缘容差（像素）
-    BOX_EXPAND = 6        # YOLO框向外扩展的像素距离
+    BOX_EXPAND = 25        # YOLO框向外扩展的像素距离
 
     # OCR 匹配参数
     OCR_DIST = 50         # OCR文字匹配距离（像素）

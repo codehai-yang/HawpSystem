@@ -86,10 +86,10 @@ class HawpDetector:
         for row in range(n_rows):
             for col in range(n_cols):
                 count += 1
-                x1 = col * stride
-                y1 = row * stride
-                x2 = min(x1 + Config.TILE_SIZE, ori_w)
-                y2 = min(y1 + Config.TILE_SIZE, ori_h)
+                x1 = int(col * stride)
+                y1 = int(row * stride)
+                x2 = min(int(x1 + Config.TILE_SIZE), ori_w)
+                y2 = min(int(y1 + Config.TILE_SIZE), ori_h)
 
                 tile = image[y1:y2, x1:x2]
 

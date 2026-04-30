@@ -32,6 +32,46 @@ def boxes_edge_touch(box1, box2, touch_threshold=None):
 
     return has_overlap_x and has_overlap_y
 
+def calculate_overlap_ratio(box1, box2):
+    """
+    计算两个框的重叠面积占比
+    返回：重叠面积 / 两个框的总面积
+
+    Args:
+        box1: [x1, y1, x2, y2]
+        box2: [x1, y1, x2, y2]
+
+    Returns:
+        float: 重叠比例 (0-1)
+    """
+    x1_min, y1_min, x1_max, y1_max = box1
+    x2_min, y2_min, x2_max, y2_max = box2
+
+    # 计算交集区域
+    inter_x1 = max(x1_min, x2_min)
+    inter_y1 = max(y1_min, y2_min)
+    inter_x2 = min(x1_max, x2_max)
+    inter_y2 = min(y1_max, y2_max)
+
+    # 如果没有交集
+    if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+        return 0.0
+
+    # 计算交集面积
+    inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+
+    # 计算两个框的面积
+    area1 = (x1_max - x1_min) * (y1_max - y1_min)
+    area2 = (x2_max - x2_min) * (y2_max - y2_min)
+
+    # 计算总面积（减去交集避免重复计算）
+    total_area = area1 + area2 - inter_area
+
+    if total_area == 0:
+        return 0.0
+
+    # 返回重叠比例
+    return inter_area / total_area
 
 def segments_intersect(p1, p2, p3, p4):
     """检查两条线段是否相交"""
@@ -237,9 +277,12 @@ class ConnectionFinder:
 
                 dev_b_info = all_devices[dev_b]
 
-                if boxes_edge_touch(dev_a_info['box'], dev_b_info['box']):
+                # 检查两个设备框的重叠比例
+                overlap_ratio = calculate_overlap_ratio(dev_a_info['box'], dev_b_info['box'])
+                if overlap_ratio > 0.6:
                     skipped_edge_touch += 1
-                    print(f'[跳过] 设备框边相交: "{dev_a_info["raw_text"]}" 和 "{dev_b_info["raw_text"]}"')
+                    print(f'[跳过] 设备框重叠过多 ({overlap_ratio:.2%}): '
+                          f'"{dev_a_info["raw_text"]}" 和 "{dev_b_info["raw_text"]}"')
                     continue
 
                 target_set = set(entries_b)
@@ -249,7 +292,7 @@ class ConnectionFinder:
                     target_set,
                     adj,
                     exclude_jids=all_entry_jids - target_set,
-                    max_depth=100
+                    max_depth=20
                 )
 
                 for path_jids in all_paths:

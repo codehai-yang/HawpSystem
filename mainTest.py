@@ -455,7 +455,7 @@ def process(image_path, out_dir='./results'):
 
 if __name__ == '__main__':
     # 配置参数
-    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_30_original.jpg'
+    IMAGE_PATH = r'F:\office\pythonProjects\SystemVision-原理图识别\yolo\images\page_32_original.jpg'
     OUTPUT_DIR = './output'
 
     process(IMAGE_PATH, OUTPUT_DIR)
